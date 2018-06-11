@@ -3,6 +3,7 @@ import itertools
 import numpy as np
 import time
 import random
+from heapq import nlargest
 
 from gensim.utils import smart_open, simple_preprocess
 from gensim.corpora.wikicorpus import _extract_pages, filter_wiki
@@ -28,7 +29,7 @@ def iter_wiki(dump_file):
 		tokens = tokenize(text)
 		if len(tokens) < MIN_NUMBER_OF_WORDS_PER_ARTICLE or any(title.startswith(ns + ':') for ns in ignore_namespaces):
 			continue  # ignore short articles and various meta-articles
-		yield title, tokens
+		yield title, text, tokens
 
 class WikiCorpus(object):
 	def __init__(self, dump_file, dictionary, clip_docs=None):
@@ -50,24 +51,24 @@ class WikiCorpus(object):
 	def __len__(self):
 		return self.clip_docs
 
-from heapq import nlargest
+
 def sample_from_iterable(iterable, samplesize):
 	return (x for _, x in nlargest(samplesize, ((random.random(), x) for x in iterable)))
 
 def get_bow(num_docs, dic_size):
 	start = time.time()
 	logging.info('creating doc stream')
-	doc_stream = (tokens for _, tokens in nlargest(num_docs, ((random.random(), x) for x in iter_wiki('./data/abstracts/' + data_path))))
-	#data = random.sample(doc_stream, num_docs)
-	logging.info('doc stream shuffled and limited. time elapsed: {}m', int((time.time() - start)/60))
+	doc_stream = (text for title, text, tokens in iter_wiki('./data/' + data_path))
+	samples = sample_from_iterable(doc_stream, num_docs)
+	logging.info('doc stream shuffled and limited. time elapsed: {}m'.format(int((time.time() - start)/60)))
 	start = time.time()
-	vectorizer = CountVectorizer(min_df=5, max_df=0.7,
+	vectorizer = CountVectorizer(min_df=20, max_df=0.1,
 								 lowercase=True,
 								 token_pattern='[a-zA-Z\-][a-zA-Z\-]{2,}',
 								 max_features=dic_size)
 
-	data_vectorized = vectorizer.fit_transform(doc_stream)
-	logging.info('doc stream vectorized. time elapsed: {}m', int((time.time() - start)/60))
+	data_vectorized = vectorizer.fit_transform(samples)
+	logging.info('doc stream vectorized. time elapsed: {}m'.format(int((time.time() - start)/60)))
 
 	return vectorizer, data_vectorized
 
@@ -81,7 +82,7 @@ def calculate_lda(topics, iters, data_vectorized):
 										  verbose=1)
 
 	lda_model.fit(data_vectorized)
-	logging.info('calculated lda model. time elapsed: {}m', int((time.time() - start)/60))
+	logging.info('calculated lda model. time elapsed: {}m'.format(int((time.time() - start)/60)))
 	return lda_model
 
 def predict(vectorizer, model, text):
@@ -92,30 +93,40 @@ def load_model(filename):
 	return joblib.load(filename)
 
 def save_model(filename, model):
-	_ = joblib.dump(model, './models/' + filename, compress=9)
+	path = './models/' + filename
+	_ = joblib.dump(model, path, compress=9)
+	logging.info('saved model to path: {}'.format(path))
 	return _
 
 
 if __name__ == '__main__':
 	###################### GENERAL SETTINGS ######################
-	data_path = 'dewiki-latest-pages-articles.xml.bz2'
+	#data_path = 'dewiki-latest-pages-articles.xml.bz2'
+	data_path = 'simplewiki-latest-pages-articles.xml.bz2'
 	MIN_NUMBER_OF_WORDS_PER_ARTICLE = 200
-	max_features = 5000
-	n_docs = 1000
+	max_features = 75000
+	n_docs = 150000
+
+	vec, data = get_bow(n_docs, max_features)
 
 	######################## EXPERIMENT 1 ########################
 	topics = 100
-	passes = 1
+	passes = 3
 
-	vec, data = get_bow(n_docs, max_features)
 	lda_model_1 = calculate_lda(topics, passes, data)
-	save_model('lda{}_{}.pkl'.format(topics, passes), lda_model_1)
+	model_1_path = 'lda{}_{}.pkl'.format(topics, passes)
+	save_model(model_1_path, lda_model_1)
 
 	######################## EXPERIMENT 2 ########################
 	topics = 250
-	passes = 1
+	passes = 3
 
 	lda_model_2 = calculate_lda(topics, passes, data)
-	save_model('lda{}_{}.pkl'.format(topics, passes), lda_model_2)
+	model_2_path = 'lda{}_{}.pkl'.format(topics, passes)
+	save_model(model_2_path, lda_model_2)
+
+	######################## PREDICTIONS #########################
+	#model = load_model('./models/lda250_1.pkl')
+	#print(predict(vec, model, 'I dont have a clue what to write smartphone'))
 
 
